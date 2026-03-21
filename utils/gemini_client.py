@@ -1,18 +1,21 @@
 import os
 
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from google.api_core.exceptions import ResourceExhausted
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
+_MODEL = "gemini-2.5-flash"
 
-def _configure() -> None:
+
+def _client() -> genai.Client:
     key = os.environ.get("GOOGLE_API_KEY", "")
     if not key:
         raise ValueError(
             "GOOGLE_API_KEY environment variable is not set. "
             "Get a key from aistudio.google.com and add it to .env"
         )
-    genai.configure(api_key=key)
+    return genai.Client(api_key=key)
 
 
 @retry(
@@ -21,13 +24,15 @@ def _configure() -> None:
     stop=stop_after_attempt(4),
 )
 def call_pro(prompt: str, thinking_budget: int = 0) -> str:
-    """Gemini 2.5 Pro for reasoning-heavy steps."""
-    _configure()
-    config: dict = {"temperature": 0.2}
+    """Gemini 2.5 Flash for reasoning-heavy steps."""
+    config_kwargs: dict = {"temperature": 0.2}
     if thinking_budget > 0:
-        config["thinking_config"] = {"thinking_budget": thinking_budget}
-    model = genai.GenerativeModel("gemini-2.5-pro", generation_config=config)
-    response = model.generate_content(prompt)
+        config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=thinking_budget)
+    response = _client().models.generate_content(
+        model=_MODEL,
+        contents=prompt,
+        config=types.GenerateContentConfig(**config_kwargs),
+    )
     return response.text
 
 
@@ -37,24 +42,26 @@ def call_pro(prompt: str, thinking_budget: int = 0) -> str:
     stop=stop_after_attempt(4),
 )
 def call_flash_with_search(prompt: str) -> str:
-    """Gemini 2.0 Flash with Google Search grounding for sourcing."""
-    _configure()
+    """Gemini 2.5 Flash with Google Search grounding for sourcing."""
     try:
-        from google.generativeai.types import GoogleSearchRetrieval, Tool
-
-        model = genai.GenerativeModel("gemini-2.0-flash")
-        tool = Tool(google_search_retrieval=GoogleSearchRetrieval())
-        response = model.generate_content(prompt, tools=[tool])
-        return response.text
-    except (ImportError, AttributeError, Exception):
-        model = genai.GenerativeModel(
-            "gemini-2.0-flash",
-            generation_config={"temperature": 0.1},
+        response = _client().models.generate_content(
+            model=_MODEL,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                tools=[types.Tool(google_search=types.GoogleSearch())],
+                temperature=0.1,
+            ),
         )
+        return response.text
+    except Exception:
         fallback_prompt = (
             prompt
             + "\n\nNote: Use your training knowledge for approximate prices. "
             "Still return the exact JSON format requested."
         )
-        response = model.generate_content(fallback_prompt)
+        response = _client().models.generate_content(
+            model=_MODEL,
+            contents=fallback_prompt,
+            config=types.GenerateContentConfig(temperature=0.1),
+        )
         return response.text

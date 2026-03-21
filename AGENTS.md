@@ -8,7 +8,7 @@ parts list, and a physics simulation verification.
 ## Tech stack
 - Python 3.11+
 - LangGraph + LangChain
-- Gemini API (google-generativeai, langchain-google-genai)
+- Gemini API (google-genai, langchain-google-genai)
 - PyBullet (physics simulation)
 - OpenSCAD CLI (STL compilation — must be installed separately)
 - Streamlit (dashboard)
