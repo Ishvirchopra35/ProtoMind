@@ -269,11 +269,24 @@ if run_btn and prompt:
         st.subheader("Parts List")
         parts = state.get("parts_list", [])
         if parts:
+            # Normalise price field — model may return price_cad or price_usd
+            for part in parts:
+                if "price_cad" not in part:
+                    part["price_cad"] = part.pop("price_usd", 0.0)
             total = sum(part.get("price_cad", 0) * part.get("qty", 1) for part in parts)
             st.metric("Estimated Total", f"${total:.2f} CAD")
-            df = pd.DataFrame(parts)[["name", "model", "price_cad", "qty", "supplier"]]
-            df.columns = ["Component", "Model", "Price (CAD)", "Qty", "Supplier"]
-            df["Price (CAD)"] = df["Price (CAD)"].apply(lambda x: f"${x:.2f}")
+            df = pd.DataFrame(parts)
+            df["price_cad"] = df.get("price_cad", 0)
+            df["supplier"] = df.get("supplier", "Amazon.ca")
+            display_cols = {
+                "name": "Component",
+                "model": "Model",
+                "price_cad": "Price (CAD)",
+                "qty": "Qty",
+                "supplier": "Supplier",
+            }
+            df = df[[c for c in display_cols if c in df.columns]].rename(columns=display_cols)
+            df["Price (CAD)"] = df["Price (CAD)"].apply(lambda x: f"${float(x):.2f}")
             st.dataframe(df, use_container_width=True, hide_index=True)
 
     with tabs[3]:
