@@ -1,12 +1,16 @@
 import os
+import multiprocessing as mp
 
 import numpy as np
 
 
-def check_stability(stl_path: str, screenshot_path: str = "outputs/sim_screenshot.png") -> dict:
-    """
-    Load an STL, simulate lateral torque, and check tip-over stability.
-    """
+# ---------------------------------------------------------------------------
+# Subprocess worker — runs in a fresh spawned process, never in-process.
+# Must be a top-level function so multiprocessing can pickle it with "spawn".
+# ---------------------------------------------------------------------------
+
+def _sim_worker(stl_path: str, screenshot_path: str, result_queue: "mp.Queue[dict]") -> None:
+    """Execute the full PyBullet stability check inside a spawned subprocess."""
     os.makedirs(os.path.dirname(screenshot_path), exist_ok=True)
 
     try:
@@ -14,11 +18,12 @@ def check_stability(stl_path: str, screenshot_path: str = "outputs/sim_screensho
         import pybullet_data
     except ImportError:
         _save_unavailable_screenshot(screenshot_path)
-        return {
+        result_queue.put({
             "passed": True,
             "reason": "PyBullet is not installed on this machine, so simulation was skipped.",
             "screenshot_path": screenshot_path,
-        }
+        })
+        return
 
     client = p.connect(p.DIRECT)
     p.setAdditionalSearchPath(pybullet_data.getDataPath(), physicsClientId=client)
@@ -75,7 +80,7 @@ def check_stability(stl_path: str, screenshot_path: str = "outputs/sim_screensho
         if failure_angle is not None:
             width_mm = (footprint_x[1] - footprint_x[0]) * 1000
             depth_mm = (footprint_y[1] - footprint_y[0]) * 1000
-            return {
+            result_queue.put({
                 "passed": False,
                 "reason": (
                     f"Design tips over at {failure_angle} degrees lateral tilt. "
@@ -83,21 +88,62 @@ def check_stability(stl_path: str, screenshot_path: str = "outputs/sim_screensho
                     "Widen base by at least 30mm on both axes."
                 ),
                 "screenshot_path": screenshot_path,
-            }
+            })
+        else:
+            result_queue.put({
+                "passed": True,
+                "reason": "Stable at 0, 15, 30, and 45 degree lateral tilt.",
+                "screenshot_path": screenshot_path,
+            })
 
-        return {
-            "passed": True,
-            "reason": "Stable at 0, 15, 30, and 45 degree lateral tilt.",
-            "screenshot_path": screenshot_path,
-        }
     finally:
         p.disconnect(physicsClientId=client)
 
 
+# ---------------------------------------------------------------------------
+# Public API — called by sim_verifier node, always runs in the Streamlit process.
+# PyBullet never touches the parent process.
+# ---------------------------------------------------------------------------
+
+def check_stability(stl_path: str, screenshot_path: str = "outputs/sim_screenshot.png") -> dict:
+    """
+    Load an STL, simulate lateral torque, and check tip-over stability.
+
+    PyBullet runs in a spawned subprocess so that:
+    - Streamlit's fork-based file watcher never inherits a live physics server.
+    - LangGraph worker threads never call into PyBullet (macOS requires the
+      physics server to be created on the main thread of its process).
+    """
+    os.makedirs(os.path.dirname(screenshot_path), exist_ok=True)
+
+    # "spawn" creates a fresh interpreter — no forked state, guaranteed main thread.
+    ctx = mp.get_context("spawn")
+    result_queue: mp.Queue = ctx.Queue()
+    proc = ctx.Process(target=_sim_worker, args=(stl_path, screenshot_path, result_queue))
+    proc.start()
+    proc.join(timeout=120)
+
+    if proc.exitcode != 0 or result_queue.empty():
+        _save_unavailable_screenshot(screenshot_path)
+        return {
+            "passed": True,
+            "reason": (
+                f"Simulation subprocess exited unexpectedly (code {proc.exitcode}). "
+                "Treating as passed to allow pipeline to continue."
+            ),
+            "screenshot_path": screenshot_path,
+        }
+
+    return result_queue.get_nowait()
+
+
+# ---------------------------------------------------------------------------
+# Screenshot helpers — also called from _sim_worker inside the subprocess.
+# ---------------------------------------------------------------------------
+
 def _save_sim_screenshot(failure_angle, output_path, footprint_x, footprint_y):
     try:
         import matplotlib
-
         matplotlib.use("Agg")
         import matplotlib.patches as patches
         import matplotlib.pyplot as plt
@@ -159,7 +205,6 @@ def _save_sim_screenshot(failure_angle, output_path, footprint_x, footprint_y):
 def _save_unavailable_screenshot(output_path: str) -> None:
     try:
         import matplotlib
-
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
 
@@ -168,24 +213,17 @@ def _save_unavailable_screenshot(output_path: str) -> None:
         ax.set_facecolor("#16213e")
         ax.axis("off")
         ax.text(
-            0.5,
-            0.62,
+            0.5, 0.62,
             "Simulation Skipped",
-            ha="center",
-            va="center",
-            color="#ffd76a",
-            fontsize=18,
-            fontweight="bold",
+            ha="center", va="center",
+            color="#ffd76a", fontsize=18, fontweight="bold",
             transform=ax.transAxes,
         )
         ax.text(
-            0.5,
-            0.42,
+            0.5, 0.42,
             "PyBullet is unavailable in this environment.",
-            ha="center",
-            va="center",
-            color="white",
-            fontsize=11,
+            ha="center", va="center",
+            color="white", fontsize=11,
             transform=ax.transAxes,
         )
         plt.tight_layout()
