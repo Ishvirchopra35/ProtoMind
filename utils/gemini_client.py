@@ -8,14 +8,14 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_ex
 _MODEL = "gemini-2.5-flash"
 
 
-def _client() -> genai.Client:
+def _api_key() -> str:
     key = os.environ.get("GOOGLE_API_KEY", "")
     if not key:
         raise ValueError(
             "GOOGLE_API_KEY environment variable is not set. "
             "Get a key from aistudio.google.com and add it to .env"
         )
-    return genai.Client(api_key=key)
+    return key
 
 
 @retry(
@@ -25,10 +25,11 @@ def _client() -> genai.Client:
 )
 def call_pro(prompt: str, thinking_budget: int = 0) -> str:
     """Gemini 2.5 Flash for reasoning-heavy steps."""
+    client = genai.Client(api_key=_api_key())
     config_kwargs: dict = {"temperature": 0.2}
     if thinking_budget > 0:
         config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=thinking_budget)
-    response = _client().models.generate_content(
+    response = client.models.generate_content(
         model=_MODEL,
         contents=prompt,
         config=types.GenerateContentConfig(**config_kwargs),
@@ -44,7 +45,8 @@ def call_pro(prompt: str, thinking_budget: int = 0) -> str:
 def call_flash_with_search(prompt: str) -> str:
     """Gemini 2.5 Flash with Google Search grounding for sourcing."""
     try:
-        response = _client().models.generate_content(
+        client = genai.Client(api_key=_api_key())
+        response = client.models.generate_content(
             model=_MODEL,
             contents=prompt,
             config=types.GenerateContentConfig(
@@ -59,7 +61,8 @@ def call_flash_with_search(prompt: str) -> str:
             + "\n\nNote: Use your training knowledge for approximate prices. "
             "Still return the exact JSON format requested."
         )
-        response = _client().models.generate_content(
+        client = genai.Client(api_key=_api_key())
+        response = client.models.generate_content(
             model=_MODEL,
             contents=fallback_prompt,
             config=types.GenerateContentConfig(temperature=0.1),
