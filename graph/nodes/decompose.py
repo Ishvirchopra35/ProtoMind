@@ -40,5 +40,22 @@ def decompose_prompt(state: PrototyperState) -> PrototyperState:
         thinking_budget=4000,
     )
     clean = extract_code_block(raw, "json")
-    tasks = json.loads(clean)
+    if not clean:
+        clean = extract_code_block(raw)
+    if not clean:
+        clean = raw.strip()
+
+    start = clean.find("{")
+    end = clean.rfind("}") + 1
+    if start != -1 and end > start:
+        clean = clean[start:end]
+
+    try:
+        tasks = json.loads(clean)
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"Decompose agent returned invalid JSON.\n"
+            f"Raw response:\n{raw}\n\nParse error: {exc}"
+        ) from exc
+
     return {**state, "decomposed_tasks": tasks, "current_step": "decomposed"}

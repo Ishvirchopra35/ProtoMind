@@ -40,6 +40,16 @@ def source_parts(state: PrototyperState) -> PrototyperState:
             SOURCING_PROMPT.format(components="\n".join(f"- {c}" for c in components))
         )
         clean = extract_code_block(raw, "json")
+        if not clean:
+            clean = extract_code_block(raw)
+        if not clean:
+            clean = raw.strip()
+
+        start = clean.find("[")
+        end = clean.rfind("]") + 1
+        if start != -1 and end > start:
+            clean = clean[start:end]
+
         parts = json.loads(clean)
     except Exception as exc:
         errors.append(f"Sourcing failed: {exc}")

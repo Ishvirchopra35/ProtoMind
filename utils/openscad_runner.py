@@ -19,7 +19,7 @@ def compile_scad_to_stl(scad_code: str, output_path: str = "outputs/turret.stl")
 
     try:
         result = subprocess.run(
-            ["openscad", "-o", output_path, scad_path],
+            ["openscad", "--export-format", "asciistl", "-o", output_path, scad_path],
             capture_output=True,
             text=True,
             timeout=60,
@@ -30,6 +30,17 @@ def compile_scad_to_stl(scad_code: str, output_path: str = "outputs/turret.stl")
         return ""
 
     if result.returncode != 0:
-        raise RuntimeError(f"OpenSCAD compilation failed:\n{result.stderr}")
+        unsupported_flag = "--export-format" in (result.stderr or "") or "asciistl" in (result.stderr or "")
+        if unsupported_flag:
+            result = subprocess.run(
+                ["openscad", "-o", output_path, scad_path],
+                capture_output=True,
+                text=True,
+                timeout=60,
+                check=False,
+            )
+
+        if result.returncode != 0:
+            raise RuntimeError(f"OpenSCAD compilation failed:\n{result.stderr}")
 
     return os.path.abspath(output_path)
