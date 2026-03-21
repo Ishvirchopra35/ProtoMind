@@ -1,0 +1,13 @@
+.env
+.venv/
+.venv-*/
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+outputs/*
+!outputs/.gitkeep
+.git/
+.gitignore
+README.md
