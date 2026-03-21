@@ -1,3 +1,5 @@
+import time
+
 from graph.state import PrototyperState
 from utils.code_extractor import extract_code_block
 from utils.gemini_client import call_pro
@@ -22,6 +24,7 @@ Rules:
 
 
 def generate_cad(state: PrototyperState) -> PrototyperState:
+    time.sleep(2)   # stagger parallel agent API calls
     spec = state["decomposed_tasks"].get("geometry_spec", {})
     constraint = state.get("cad_constraint", "") or "none"
     raw = call_pro(

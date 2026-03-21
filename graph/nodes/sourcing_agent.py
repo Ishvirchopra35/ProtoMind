@@ -1,4 +1,5 @@
 import json
+import time
 from pathlib import Path
 
 from graph.state import PrototyperState
@@ -88,6 +89,7 @@ def _has_real_prices(parts: list) -> bool:
 
 
 def source_parts(state: PrototyperState) -> PrototyperState:
+    time.sleep(14)  # stagger parallel agent API calls
     components = state["decomposed_tasks"].get("components", [])
     errors = list(state.get("errors", []))
     component_str = "\n".join(f"- {c}" for c in components)

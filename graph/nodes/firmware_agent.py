@@ -1,3 +1,4 @@
+import time
 from pathlib import Path
 
 from graph.state import PrototyperState
@@ -23,6 +24,7 @@ Rules:
 
 
 def generate_firmware(state: PrototyperState) -> PrototyperState:
+    time.sleep(8)   # stagger parallel agent API calls
     spec = state["decomposed_tasks"].get("firmware_spec", {})
     mcu = spec.get("microcontroller", "Arduino Uno")
     raw = call_pro(

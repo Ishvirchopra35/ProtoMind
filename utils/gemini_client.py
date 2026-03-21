@@ -64,7 +64,12 @@ def call_flash_with_search(prompt: str) -> str:
             ),
         )
         return response.text
-    except Exception:
+    except (ClientError, ServerError) as exc:
+        # Let rate-limit and server errors propagate so the outer @retry handles them
+        if isinstance(exc, ClientError) and getattr(exc, "code", None) in (429, 500, 503):
+            raise
+        if isinstance(exc, ServerError):
+            raise
         fallback_prompt = (
             prompt
             + "\n\nIMPORTANT: Google Search is unavailable. Use your training knowledge "
