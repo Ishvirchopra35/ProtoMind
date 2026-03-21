@@ -62,13 +62,17 @@ def call_flash_with_search(prompt: str) -> str:
     except Exception:
         fallback_prompt = (
             prompt
-            + "\n\nNote: Use your training knowledge for approximate prices. "
+            + "\n\nIMPORTANT: Google Search is unavailable. Use your training knowledge "
+            "to provide realistic retail price estimates in CAD for each component. "
+            "Base prices on typical Amazon.ca or Canadian electronics retailer prices. "
+            "NEVER use 0, null, or placeholder values — every price_cad must be a "
+            "positive number reflecting a real-world market price (e.g. 8.99, 24.95, 12.50). "
             "Still return the exact JSON format requested."
         )
         client = genai.Client(api_key=_api_key())
         response = client.models.generate_content(
             model=_MODEL,
             contents=fallback_prompt,
-            config=types.GenerateContentConfig(temperature=0.1),
+            config=types.GenerateContentConfig(temperature=0.2),
         )
         return response.text
