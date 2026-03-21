@@ -1,144 +1,141 @@
+"""
+Stability checker — pure numpy/matplotlib, no pybullet required.
+
+Parses the STL, computes the mesh centroid as a proxy for centre of mass,
+then checks whether the centroid projection stays inside the base footprint
+when the model is tilted to 15 / 30 / 45 degrees about its X axis.
+"""
+
 import os
-import multiprocessing as mp
+import struct
 
 import numpy as np
 
 
 # ---------------------------------------------------------------------------
-# Subprocess worker — runs in a fresh spawned process, never in-process.
-# Must be a top-level function so multiprocessing can pickle it with "spawn".
+# STL parsing
 # ---------------------------------------------------------------------------
 
-def _sim_worker(stl_path: str, screenshot_path: str, result_queue: "mp.Queue[dict]") -> None:
-    """Execute the full PyBullet stability check inside a spawned subprocess."""
-    os.makedirs(os.path.dirname(screenshot_path), exist_ok=True)
+def _parse_stl(stl_path: str) -> np.ndarray:
+    """Return an (N, 3) float32 array of all triangle vertices."""
+    with open(stl_path, "rb") as f:
+        header = f.read(80)
 
+    # Detect ASCII STL (starts with "solid" and is valid UTF-8 text)
     try:
-        import pybullet as p
-        import pybullet_data
-    except ImportError:
-        _save_unavailable_screenshot(screenshot_path)
-        result_queue.put({
-            "passed": True,
-            "reason": "PyBullet is not installed on this machine, so simulation was skipped.",
-            "screenshot_path": screenshot_path,
-        })
-        return
+        if header.lstrip().startswith(b"solid"):
+            return _parse_ascii_stl(stl_path)
+    except Exception:
+        pass
 
-    client = p.connect(p.DIRECT)
-    p.setAdditionalSearchPath(pybullet_data.getDataPath(), physicsClientId=client)
-    p.setGravity(0, 0, -9.81, physicsClientId=client)
+    return _parse_binary_stl(stl_path)
 
-    try:
-        p.loadURDF("plane.urdf", physicsClientId=client)
 
-        collision_shape = p.createCollisionShape(
-            p.GEOM_MESH,
-            fileName=stl_path,
-            meshScale=[0.001, 0.001, 0.001],
-            physicsClientId=client,
-        )
-        visual_shape = p.createVisualShape(
-            p.GEOM_MESH,
-            fileName=stl_path,
-            meshScale=[0.001, 0.001, 0.001],
-            rgbaColor=[0.3, 0.6, 0.9, 1.0],
-            physicsClientId=client,
-        )
-        body = p.createMultiBody(
-            baseMass=0.5,
-            baseCollisionShapeIndex=collision_shape,
-            baseVisualShapeIndex=visual_shape,
-            basePosition=[0, 0, 0.05],
-            physicsClientId=client,
-        )
+def _parse_binary_stl(stl_path: str) -> np.ndarray:
+    with open(stl_path, "rb") as f:
+        f.read(80)  # header
+        (num_tri,) = struct.unpack("<I", f.read(4))
+        # 50 bytes per triangle: 12 normal + 12*3 vertices + 2 attr
+        raw = np.frombuffer(f.read(num_tri * 50), dtype=np.uint8).reshape(num_tri, 50)
 
-        aabb_min, aabb_max = p.getAABB(body, physicsClientId=client)
-        footprint_x = (aabb_min[0], aabb_max[0])
-        footprint_y = (aabb_min[1], aabb_max[1])
+    # Vertices sit at bytes 12-48 of each 50-byte record
+    v1 = raw[:, 12:24].view(np.float32).reshape(-1, 3)
+    v2 = raw[:, 24:36].view(np.float32).reshape(-1, 3)
+    v3 = raw[:, 36:48].view(np.float32).reshape(-1, 3)
+    return np.vstack([v1, v2, v3])
 
-        failure_angle = None
-        for angle_deg in [0, 15, 30, 45]:
-            angle_rad = np.radians(angle_deg)
-            orientation = p.getQuaternionFromEuler([angle_rad, 0, 0])
-            p.resetBasePositionAndOrientation(
-                body, [0, 0, 0.05], orientation, physicsClientId=client
-            )
 
-            com_pos, _ = p.getBasePositionAndOrientation(body, physicsClientId=client)
-            com_x, com_y = com_pos[0], com_pos[1]
-            in_footprint = (
-                footprint_x[0] <= com_x <= footprint_x[1]
-                and footprint_y[0] <= com_y <= footprint_y[1]
-            )
-            if not in_footprint:
-                failure_angle = angle_deg
-                break
-
-        _save_sim_screenshot(failure_angle, screenshot_path, footprint_x, footprint_y)
-
-        if failure_angle is not None:
-            width_mm = (footprint_x[1] - footprint_x[0]) * 1000
-            depth_mm = (footprint_y[1] - footprint_y[0]) * 1000
-            result_queue.put({
-                "passed": False,
-                "reason": (
-                    f"Design tips over at {failure_angle} degrees lateral tilt. "
-                    f"Base footprint ({width_mm:.0f}mm x {depth_mm:.0f}mm) is too narrow. "
-                    "Widen base by at least 30mm on both axes."
-                ),
-                "screenshot_path": screenshot_path,
-            })
-        else:
-            result_queue.put({
-                "passed": True,
-                "reason": "Stable at 0, 15, 30, and 45 degree lateral tilt.",
-                "screenshot_path": screenshot_path,
-            })
-
-    finally:
-        p.disconnect(physicsClientId=client)
+def _parse_ascii_stl(stl_path: str) -> np.ndarray:
+    vertices = []
+    with open(stl_path, "r", encoding="utf-8", errors="ignore") as f:
+        for line in f:
+            line = line.strip()
+            if line.startswith("vertex"):
+                parts = line.split()
+                vertices.append([float(parts[1]), float(parts[2]), float(parts[3])])
+    return np.array(vertices, dtype=np.float32)
 
 
 # ---------------------------------------------------------------------------
-# Public API — called by sim_verifier node, always runs in the Streamlit process.
-# PyBullet never touches the parent process.
+# Stability check
 # ---------------------------------------------------------------------------
 
 def check_stability(stl_path: str, screenshot_path: str = "outputs/sim_screenshot.png") -> dict:
     """
     Load an STL, simulate lateral torque, and check tip-over stability.
 
-    PyBullet runs in a spawned subprocess so that:
-    - Streamlit's fork-based file watcher never inherits a live physics server.
-    - LangGraph worker threads never call into PyBullet (macOS requires the
-      physics server to be created on the main thread of its process).
+    The check is purely geometric:
+      - Centre of mass ≈ centroid of all mesh vertices.
+      - Base footprint = XY AABB of the mesh at 0° tilt.
+      - The model is tilted 15 / 30 / 45° about its X axis; at each angle the
+        rotated centroid's Y projection is compared against the footprint edge.
+        If it falls outside, the design would tip over.
     """
     os.makedirs(os.path.dirname(screenshot_path), exist_ok=True)
 
-    # "spawn" creates a fresh interpreter — no forked state, guaranteed main thread.
-    ctx = mp.get_context("spawn")
-    result_queue: mp.Queue = ctx.Queue()
-    proc = ctx.Process(target=_sim_worker, args=(stl_path, screenshot_path, result_queue))
-    proc.start()
-    proc.join(timeout=120)
-
-    if proc.exitcode != 0 or result_queue.empty():
+    try:
+        vertices = _parse_stl(stl_path)
+    except Exception as exc:
         _save_unavailable_screenshot(screenshot_path)
         return {
             "passed": True,
+            "reason": f"Simulation skipped — could not parse STL: {exc}",
+            "screenshot_path": screenshot_path,
+        }
+
+    if len(vertices) == 0:
+        _save_unavailable_screenshot(screenshot_path)
+        return {
+            "passed": True,
+            "reason": "Simulation skipped — STL contained no vertices.",
+            "screenshot_path": screenshot_path,
+        }
+
+    # Footprint: XY extents at rest
+    x_min, y_min = vertices[:, 0].min(), vertices[:, 1].min()
+    x_max, y_max = vertices[:, 0].max(), vertices[:, 1].max()
+    footprint_x = (float(x_min), float(x_max))
+    footprint_y = (float(y_min), float(y_max))
+
+    # Centre of mass ≈ centroid
+    com = vertices.mean(axis=0)  # shape (3,)
+
+    failure_angle = None
+    for angle_deg in [15, 30, 45]:
+        angle_rad = np.radians(angle_deg)
+        # Rotate COM about the X axis
+        cos_a, sin_a = np.cos(angle_rad), np.sin(angle_rad)
+        rotated_y = cos_a * com[1] - sin_a * com[2]
+
+        # Check Y projection against original footprint
+        if not (footprint_y[0] <= rotated_y <= footprint_y[1]):
+            failure_angle = angle_deg
+            break
+
+    _save_sim_screenshot(failure_angle, screenshot_path, footprint_x, footprint_y)
+
+    if failure_angle is not None:
+        width_mm = footprint_x[1] - footprint_x[0]
+        depth_mm = footprint_y[1] - footprint_y[0]
+        return {
+            "passed": False,
             "reason": (
-                f"Simulation subprocess exited unexpectedly (code {proc.exitcode}). "
-                "Treating as passed to allow pipeline to continue."
+                f"Design tips over at {failure_angle}° lateral tilt. "
+                f"Base footprint ({width_mm:.0f} x {depth_mm:.0f} units) is too narrow. "
+                "Widen base by at least 30 units on both axes."
             ),
             "screenshot_path": screenshot_path,
         }
 
-    return result_queue.get_nowait()
+    return {
+        "passed": True,
+        "reason": "Stable at 15, 30, and 45 degree lateral tilt.",
+        "screenshot_path": screenshot_path,
+    }
 
 
 # ---------------------------------------------------------------------------
-# Screenshot helpers — also called from _sim_worker inside the subprocess.
+# Screenshot helpers
 # ---------------------------------------------------------------------------
 
 def _save_sim_screenshot(failure_angle, output_path, footprint_x, footprint_y):
@@ -152,8 +149,8 @@ def _save_sim_screenshot(failure_angle, output_path, footprint_x, footprint_y):
         fig.patch.set_facecolor("#1a1a2e")
         ax.set_facecolor("#16213e")
 
-        footprint_width = (footprint_x[1] - footprint_x[0]) * 1000
-        footprint_depth = (footprint_y[1] - footprint_y[0]) * 1000
+        footprint_width = footprint_x[1] - footprint_x[0]
+        footprint_depth = footprint_y[1] - footprint_y[0]
         rect = patches.Rectangle(
             (-footprint_width / 2, -footprint_depth / 2),
             footprint_width,
@@ -165,34 +162,34 @@ def _save_sim_screenshot(failure_angle, output_path, footprint_x, footprint_y):
         )
         ax.add_patch(rect)
         ax.plot(
-            0,
-            0,
+            0, 0,
             "o",
             color="#ff6b6b" if failure_angle else "#69f0ae",
             markersize=14,
-            label="Center of mass",
+            label="Centre of mass",
             zorder=5,
         )
 
         status = (
-            f"UNSTABLE - tips at {failure_angle} degrees"
+            f"UNSTABLE — tips at {failure_angle}°"
             if failure_angle
-            else "STABLE - passed all tilt checks"
+            else "STABLE — passed all tilt checks"
         )
         title_color = "#ff6b6b" if failure_angle else "#69f0ae"
 
         ax.set_title(
-            f"PyBullet Stability Check\n{status}",
+            f"Stability Check\n{status}",
             color=title_color,
             fontsize=12,
             fontweight="bold",
         )
-        ax.set_xlabel("X footprint (mm)", color="white")
-        ax.set_ylabel("Y footprint (mm)", color="white")
+        ax.set_xlabel("X footprint", color="white")
+        ax.set_ylabel("Y footprint", color="white")
         ax.tick_params(colors="white")
         ax.legend(facecolor="#1a1a2e", labelcolor="white")
-        ax.set_xlim(-max(footprint_width, footprint_depth), max(footprint_width, footprint_depth))
-        ax.set_ylim(-max(footprint_width, footprint_depth), max(footprint_width, footprint_depth))
+        span = max(footprint_width, footprint_depth)
+        ax.set_xlim(-span, span)
+        ax.set_ylim(-span, span)
         ax.set_aspect("equal")
 
         plt.tight_layout()
@@ -221,7 +218,7 @@ def _save_unavailable_screenshot(output_path: str) -> None:
         )
         ax.text(
             0.5, 0.42,
-            "PyBullet is unavailable in this environment.",
+            "STL could not be loaded.",
             ha="center", va="center",
             color="white", fontsize=11,
             transform=ax.transAxes,

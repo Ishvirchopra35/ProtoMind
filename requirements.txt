@@ -2,7 +2,6 @@ langgraph>=0.2.0
 langchain>=0.3.0
 langchain-google-genai>=2.1.0
 google-genai>=1.0.0
-pybullet>=3.2.6; platform_system != "Darwin" or platform_machine != "arm64"
 streamlit>=1.40.0
 tenacity>=9.0.0
 matplotlib>=3.9.0
