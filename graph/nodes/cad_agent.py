@@ -30,4 +30,4 @@ def generate_cad(state: PrototyperState) -> PrototyperState:
     )
     code = extract_code_block(raw, "openscad") or extract_code_block(raw)
     stl_path = compile_scad_to_stl(code, "outputs/turret.stl")
-    return {**state, "cad_code": code, "stl_path": stl_path}
+    return {"cad_code": code, "stl_path": stl_path}

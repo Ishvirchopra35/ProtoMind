@@ -70,4 +70,4 @@ def source_parts(state: PrototyperState) -> PrototyperState:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(parts, indent=2))
 
-    return {**state, "parts_list": parts, "errors": errors}
+    return {"parts_list": parts, "errors": errors}

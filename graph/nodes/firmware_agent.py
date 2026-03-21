@@ -39,4 +39,4 @@ def generate_firmware(state: PrototyperState) -> PrototyperState:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(code)
 
-    return {**state, "firmware_code": code}
+    return {"firmware_code": code}

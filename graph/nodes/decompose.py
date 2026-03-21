@@ -58,4 +58,4 @@ def decompose_prompt(state: PrototyperState) -> PrototyperState:
             f"Raw response:\n{raw}\n\nParse error: {exc}"
         ) from exc
 
-    return {**state, "decomposed_tasks": tasks, "current_step": "decomposed"}
+    return {"decomposed_tasks": tasks, "current_step": "decomposed"}

@@ -16,14 +16,13 @@ def route_after_sim(state: PrototyperState) -> str:
     return "done"
 
 
-def increment_retry(state: PrototyperState) -> PrototyperState:
+def increment_retry(state: PrototyperState) -> dict:
     next_attempt = state.get("retry_count", 0) + 1
     reason = state.get("sim_failure_reason", "")
     errors = list(state.get("errors", []))
     if reason:
         errors.append(f"Retry {next_attempt}: {reason}")
     return {
-        **state,
         "retry_count": next_attempt,
         "cad_constraint": reason,
         "current_step": f"retrying_cad_{next_attempt}",

@@ -11,7 +11,6 @@ def verify_simulation(state: PrototyperState) -> PrototyperState:
         errors = list(state.get("errors", []))
         errors.append("Simulation skipped: STL artifact was not available.")
         return {
-            **state,
             "sim_passed": True,
             "sim_failure_reason": f"Simulation skipped because STL file was not found at '{stl_path}'",
             "sim_screenshot": "",
@@ -23,7 +22,6 @@ def verify_simulation(state: PrototyperState) -> PrototyperState:
         result = check_stability(stl_path, screenshot_path="outputs/sim_screenshot.png")
     except Exception as exc:
         return {
-            **state,
             "sim_passed": True,
             "sim_failure_reason": f"Sim skipped — mesh load error: {exc}",
             "sim_screenshot": "",
@@ -31,7 +29,6 @@ def verify_simulation(state: PrototyperState) -> PrototyperState:
         }
 
     return {
-        **state,
         "sim_passed": result["passed"],
         "sim_failure_reason": result.get("reason", ""),
         "sim_screenshot": result.get("screenshot_path", ""),
