@@ -175,6 +175,8 @@ if run_btn and prompt:
         render_sidebar_timeline(timeline_box)
         render_status_table(status_box, statuses)
         st.success("Loaded demo data.")
+        st.session_state["pipeline_result"] = state
+        st.session_state["pipeline_elapsed"] = 0.0
     else:
         initial_state = build_initial_state(prompt)
         # Accumulated state: starts as the full initial state and is updated
@@ -246,6 +248,12 @@ if run_btn and prompt:
         }
         render_status_table(status_box, statuses)
         render_sidebar_timeline(timeline_box)
+        st.session_state["pipeline_result"] = state
+        st.session_state["pipeline_elapsed"] = elapsed
+
+if "pipeline_result" in st.session_state:
+    state = st.session_state["pipeline_result"]
+    elapsed = st.session_state.get("pipeline_elapsed", 0.0)
 
     st.success("Pipeline complete.")
     retries = state.get("retry_count", 0)
