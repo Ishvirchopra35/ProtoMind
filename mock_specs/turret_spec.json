@@ -1,0 +1,107 @@
+{
+  "user_prompt": "Build me a voice-controlled turret that tracks blue balls",
+  "decomposed_tasks": {
+    "goal": "A tabletop pan-and-tilt turret that tracks blue objects and responds to simple voice commands.",
+    "geometry_spec": {
+      "description": "Wide cylindrical base with a two-axis servo bracket, camera mast, and front sensor cradle.",
+      "base_dimensions_mm": {
+        "width": 120,
+        "depth": 110,
+        "height": 42
+      },
+      "moving_parts": [
+        "pan servo stage",
+        "tilt servo cradle"
+      ],
+      "mounting_points": [
+        "camera plate",
+        "ultrasonic sensor bracket",
+        "Arduino standoffs",
+        "servo horn mounts"
+      ],
+      "stability_requirement": "Must remain stable through 45 degrees of lateral tilt."
+    },
+    "firmware_spec": {
+      "microcontroller": "Arduino Uno",
+      "inputs": [
+        "voice recognition module",
+        "HC-SR04 ultrasonic distance sensor",
+        "OV2640-compatible vision trigger line"
+      ],
+      "outputs": [
+        "pan servo",
+        "tilt servo",
+        "status LED"
+      ],
+      "control_logic": "Listen for track, hold, and sweep commands while keeping the turret centered on the tracked target and clamping servo travel to safe angles.",
+      "libraries_needed": [
+        "Servo.h",
+        "SoftwareSerial.h"
+      ]
+    },
+    "components": [
+      "Arduino Uno Rev3",
+      "TowerPro SG90 micro servo",
+      "TowerPro MG996R servo",
+      "HC-SR04 ultrasonic sensor",
+      "Elechouse Voice Recognition Module V3"
+    ]
+  },
+  "cad_code": "base_w = 120;\nbase_d = 110;\nbase_h = 42;\npan_r = 32;\npan_h = 18;\nmast_w = 16;\nmast_d = 28;\nmast_h = 78;\ncradle_w = 72;\ncradle_d = 20;\ncradle_h = 12;\n\nmodule base_plate() {\n    difference() {\n        hull() {\n            translate([-base_w/2 + 12, -base_d/2 + 12, 0]) cylinder(h = base_h, r = 12, $fn = 48);\n            translate([ base_w/2 - 12, -base_d/2 + 12, 0]) cylinder(h = base_h, r = 12, $fn = 48);\n            translate([-base_w/2 + 12,  base_d/2 - 12, 0]) cylinder(h = base_h, r = 12, $fn = 48);\n            translate([ base_w/2 - 12,  base_d/2 - 12, 0]) cylinder(h = base_h, r = 12, $fn = 48);\n        }\n        translate([0, 0, 6]) cube([70, 50, 26], center = true);\n    }\n}\n\nmodule pan_stage() {\n    translate([0, 0, base_h]) cylinder(h = pan_h, r = pan_r, $fn = 64);\n}\n\nmodule mast() {\n    translate([-mast_w/2, -mast_d/2, base_h + pan_h]) cube([mast_w, mast_d, mast_h]);\n}\n\nmodule tilt_cradle() {\n    translate([-cradle_w/2, -cradle_d/2, base_h + pan_h + mast_h]) cube([cradle_w, cradle_d, cradle_h]);\n}\n\nmodule sensor_mount() {\n    translate([-26, -10, base_h + pan_h + mast_h + cradle_h]) cube([52, 20, 18]);\n}\n\nbase_plate();\npan_stage();\nmast();\ntilt_cradle();\nsensor_mount();\n",
+  "stl_path": "",
+  "firmware_code": "#include <Servo.h>\n#include <SoftwareSerial.h>\n\nconst int panPin = 9;\nconst int tiltPin = 10;\nconst int trigPin = 6;\nconst int echoPin = 7;\nconst int ledPin = 13;\nconst int voiceRxPin = 2;\nconst int voiceTxPin = 3;\n\nServo panServo;\nServo tiltServo;\nSoftwareSerial voiceSerial(voiceRxPin, voiceTxPin);\n\nint panAngle = 90;\nint tiltAngle = 85;\nunsigned long lastSweepStep = 0;\nbool trackingEnabled = true;\n\nlong readDistanceCm() {\n  digitalWrite(trigPin, LOW);\n  delayMicroseconds(2);\n  digitalWrite(trigPin, HIGH);\n  delayMicroseconds(10);\n  digitalWrite(trigPin, LOW);\n  long duration = pulseIn(echoPin, HIGH, 25000);\n  if (duration == 0) {\n    return -1;\n  }\n  return duration / 58;\n}\n\nvoid clampAndWrite() {\n  panAngle = constrain(panAngle, 15, 165);\n  tiltAngle = constrain(tiltAngle, 35, 140);\n  panServo.write(panAngle);\n  tiltServo.write(tiltAngle);\n}\n\nvoid handleVoiceCommand(char command) {\n  if (command == 'T') {\n    trackingEnabled = true;\n    digitalWrite(ledPin, HIGH);\n  } else if (command == 'H') {\n    trackingEnabled = false;\n    digitalWrite(ledPin, LOW);\n  } else if (command == 'S') {\n    panAngle = 45;\n    tiltAngle = 90;\n    clampAndWrite();\n  }\n}\n\nvoid setup() {\n  pinMode(trigPin, OUTPUT);\n  pinMode(echoPin, INPUT);\n  pinMode(ledPin, OUTPUT);\n  panServo.attach(panPin);\n  tiltServo.attach(tiltPin);\n  voiceSerial.begin(9600);\n  Serial.begin(115200);\n  clampAndWrite();\n}\n\nvoid loop() {\n  if (voiceSerial.available()) {\n    handleVoiceCommand((char)voiceSerial.read());\n  }\n\n  long distanceCm = readDistanceCm();\n  if (distanceCm < 0) {\n    delay(40);\n    return;\n  }\n\n  if (trackingEnabled) {\n    if (distanceCm < 20) {\n      tiltAngle += 1;\n    } else if (distanceCm > 45) {\n      tiltAngle -= 1;\n    }\n\n    if (millis() - lastSweepStep > 120) {\n      panAngle += 2;\n      if (panAngle > 150) {\n        panAngle = 30;\n      }\n      lastSweepStep = millis();\n    }\n    clampAndWrite();\n  }\n\n  delay(30);\n}\n",
+  "parts_list": [
+    {
+      "name": "Arduino Uno Rev3",
+      "model": "A000066",
+      "price_usd": 28.00,
+      "url": "https://store-usa.arduino.cc/products/arduino-uno-rev3",
+      "qty": 1,
+      "supplier": "Arduino",
+      "description": "Main controller for the turret logic and sensor I/O."
+    },
+    {
+      "name": "TowerPro SG90 Micro Servo",
+      "model": "SG90",
+      "price_usd": 4.49,
+      "url": "https://www.amazon.com/dp/B07MLR1498",
+      "qty": 1,
+      "supplier": "Amazon",
+      "description": "Handles the lightweight tilt axis."
+    },
+    {
+      "name": "MG996R High Torque Servo",
+      "model": "MG996R",
+      "price_usd": 12.99,
+      "url": "https://www.amazon.com/dp/B07MFK266B",
+      "qty": 1,
+      "supplier": "Amazon",
+      "description": "Provides enough torque for the pan stage and payload."
+    },
+    {
+      "name": "HC-SR04 Ultrasonic Sensor",
+      "model": "HC-SR04",
+      "price_usd": 3.95,
+      "url": "https://www.adafruit.com/product/3942",
+      "qty": 1,
+      "supplier": "Adafruit",
+      "description": "Used for distance-based target centering and collision avoidance."
+    },
+    {
+      "name": "Voice Recognition Module V3",
+      "model": "Elechouse V3",
+      "price_usd": 21.50,
+      "url": "https://www.sparkfun.com/products/retired/10661",
+      "qty": 1,
+      "supplier": "SparkFun",
+      "description": "Provides simple local voice command recognition for turret control."
+    }
+  ],
+  "sim_passed": true,
+  "sim_screenshot": "",
+  "sim_failure_reason": "Stable at 0, 15, 30, and 45 degree lateral tilt.",
+  "retry_count": 0,
+  "cad_constraint": "",
+  "current_step": "sim_passed",
+  "errors": []
+}
