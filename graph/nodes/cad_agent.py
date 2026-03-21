@@ -20,14 +20,43 @@ Rules:
 - Output ONLY the raw OpenSCAD code. No markdown fences, no explanation.
 """
 
+FIX_PROMPT = """
+The following OpenSCAD code produced a syntax error when compiled:
+
+--- CODE ---
+{code}
+
+--- ERROR ---
+{error}
+
+Fix ALL syntax errors and return ONLY the corrected raw OpenSCAD code.
+No markdown fences, no explanation.
+"""
+
+
+def _try_compile(code: str) -> tuple[str, str]:
+    """Returns (stl_path, error). One of them will be empty."""
+    try:
+        stl_path = compile_scad_to_stl(code, "outputs/turret.stl")
+        return stl_path, ""
+    except RuntimeError as exc:
+        return "", str(exc)
+
 
 def generate_cad(state: PrototyperState) -> PrototyperState:
     spec = state["decomposed_tasks"].get("geometry_spec", {})
     constraint = state.get("cad_constraint", "") or "none"
-    raw = call_pro(
-        CAD_PROMPT.format(geometry_spec=spec, cad_constraint=constraint),
-        thinking_budget=8000,
-    )
+
+    raw = call_pro(CAD_PROMPT.format(geometry_spec=spec, cad_constraint=constraint))
     code = extract_code_block(raw, "openscad") or extract_code_block(raw)
-    stl_path = compile_scad_to_stl(code, "outputs/turret.stl")
+
+    stl_path, err = _try_compile(code)
+
+    # If compilation failed, ask Gemini to fix the syntax error (one retry)
+    if err:
+        fix_raw = call_pro(FIX_PROMPT.format(code=code, error=err))
+        code = extract_code_block(fix_raw, "openscad") or extract_code_block(fix_raw)
+        stl_path, _ = _try_compile(code)
+        # If still failing, stl_path stays empty — pipeline continues without STL
+
     return {"cad_code": code, "stl_path": stl_path}

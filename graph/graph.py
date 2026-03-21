@@ -40,11 +40,12 @@ def build_graph():
     graph.add_node("sim_verify", verify_simulation)
     graph.add_node("increment_retry", increment_retry)
 
-    # Sequential execution: one API call at a time to avoid rate limits
     graph.set_entry_point("decompose")
     graph.add_edge("decompose", "cad")
-    graph.add_edge("cad", "firmware")
-    graph.add_edge("firmware", "sourcing")
+    graph.add_edge("decompose", "firmware")
+    graph.add_edge("decompose", "sourcing")
+    graph.add_edge("cad", "sim_verify")
+    graph.add_edge("firmware", "sim_verify")
     graph.add_edge("sourcing", "sim_verify")
     graph.add_conditional_edges(
         "sim_verify",
