@@ -24,70 +24,53 @@ STEP_LABELS = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Sidebar timeline — pure Streamlit, no HTML
+# ---------------------------------------------------------------------------
+
 def render_sidebar_timeline(container) -> None:
-    container.markdown("**Pipeline steps**")
-    steps = [
-        ("decompose", "Decompose prompt"),
-        ("cad", "Generate CAD (OpenSCAD)"),
-        ("firmware", "Generate firmware (Arduino)"),
-        ("sourcing", "Source parts (live prices)"),
-        ("sim_verify", "Physics simulation"),
-    ]
     current = st.session_state.get("current_step", "")
     completed = set(st.session_state.get("completed_steps", []))
-
+    steps = [
+        ("decompose", "Decompose prompt"),
+        ("cad", "Generate CAD"),
+        ("firmware", "Generate firmware"),
+        ("sourcing", "Source parts"),
+        ("sim_verify", "Simulation"),
+    ]
+    lines = []
     for key, label in steps:
         if key in current:
-            container.markdown(f"🟡 **{label}**")
+            lines.append(f"🟡 **{label}**")
         elif key in completed:
-            container.markdown(f"🟢 {label}")
+            lines.append(f"🟢 {label}")
         else:
-            container.markdown(f"⚪ {label}")
+            lines.append(f"⚪ {label}")
+    container.markdown("**Pipeline**\n\n" + "\n\n".join(lines))
+
+
+# ---------------------------------------------------------------------------
+# Status table — st.status / columns, no HTML
+# ---------------------------------------------------------------------------
+
+STATUS_ICON = {"pending": "⚪", "running": "🟡", "done": "✅", "failed": "❌"}
+STATUS_LABEL = {"pending": "Pending", "running": "Running", "done": "Complete", "failed": "Failed"}
 
 
 def render_status_table(container, statuses: dict[str, str]) -> None:
-    styles = {
-        "pending": ("#3d4451", "#c4c9d4", "Pending"),
-        "running": ("#7c5e10", "#ffd76a", "Running"),
-        "done": ("#143f2f", "#8af3c4", "Complete"),
-        "failed": ("#4b1d1d", "#ff9f9f", "Needs attention"),
-    }
-    rows = []
-    for step in PIPELINE_STEPS:
-        state = statuses.get(step, "pending")
-        bg, fg, label = styles[state]
-        icon = "⏳" if state == "running" else ("✓" if state == "done" else "•")
-        rows.append(
-            f"""
-            <tr>
-                <td style="padding:10px 12px;font-weight:600;">{STEP_LABELS[step]}</td>
-                <td style="padding:10px 12px;">
-                    <span style="background:{bg};color:{fg};padding:4px 10px;border-radius:999px;">
-                        {icon} {label}
-                    </span>
-                </td>
-            </tr>
-            """
-        )
-    container.markdown(
-        """
-        <table style="width:100%;border-collapse:collapse;border:1px solid #2b3240;">
-            <thead>
-                <tr style="background:#151a21;">
-                    <th style="padding:10px 12px;text-align:left;">Node</th>
-                    <th style="padding:10px 12px;text-align:left;">Status</th>
-                </tr>
-            </thead>
-            <tbody>
-        """
-        + "".join(rows)
-        + """
-            </tbody>
-        </table>
-        """,
-        unsafe_allow_html=True,
-    )
+    with container:
+        cols = st.columns(len(PIPELINE_STEPS))
+        for col, step in zip(cols, PIPELINE_STEPS):
+            s = statuses.get(step, "pending")
+            col.metric(
+                label=STEP_LABELS[step],
+                value=f"{STATUS_ICON[s]} {STATUS_LABEL[s]}",
+            )
 
+
+# ---------------------------------------------------------------------------
+# State helpers
+# ---------------------------------------------------------------------------
 
 def build_initial_state(prompt: str) -> PrototyperState:
     return {
@@ -111,9 +94,13 @@ def load_demo_state() -> PrototyperState:
     return json.loads(Path("mock_specs/turret_spec.json").read_text())
 
 
+# ---------------------------------------------------------------------------
+# Page layout
+# ---------------------------------------------------------------------------
+
 st.set_page_config(page_title="Autonomous Prototyper", layout="wide")
 st.title("Autonomous Prototyper")
-st.caption("Multi-agent hardware pipeline powered by Gemini")
+st.caption("Multi-agent hardware pipeline powered by Gemini 2.5 Flash")
 
 with st.sidebar:
     st.header("Configuration")
@@ -151,7 +138,12 @@ prompt = st.text_area(
 
 run_btn = st.button("Run Pipeline", type="primary", use_container_width=True)
 
+# ---------------------------------------------------------------------------
+# Pipeline execution
+# ---------------------------------------------------------------------------
+
 if run_btn and prompt:
+    st.session_state.pop("pipeline_result", None)
     st.session_state["current_step"] = ""
     st.session_state["completed_steps"] = []
     render_sidebar_timeline(timeline_box)
@@ -164,7 +156,6 @@ if run_btn and prompt:
     statuses = {step: "pending" for step in PIPELINE_STEPS}
     render_status_table(status_box, statuses)
 
-    state: PrototyperState
     elapsed = 0.0
 
     if use_demo and Path("mock_specs/turret_spec.json").exists():
@@ -179,10 +170,6 @@ if run_btn and prompt:
         st.session_state["pipeline_elapsed"] = 0.0
     else:
         initial_state = build_initial_state(prompt)
-        # Accumulated state: starts as the full initial state and is updated
-        # with each node's partial output as the graph streams.  We NEVER
-        # replace it wholesale — graph.stream() yields partial dicts, not the
-        # full state, so replacing would discard all previously-written keys.
         state = dict(initial_state)
         graph = build_graph()
         start_time = time.time()
@@ -195,11 +182,10 @@ if run_btn and prompt:
             "increment_retry": "cad",
         }
 
-        with st.spinner("Running pipeline..."):
+        with st.spinner("Running pipeline…"):
             for step_output in graph.stream(initial_state):
                 node_name = list(step_output.keys())[0]
                 node_update = list(step_output.values())[0]
-                # Merge the partial update into the accumulated state.
                 state.update(node_update)
                 resolved_step = step_map.get(node_name)
 
@@ -226,12 +212,11 @@ if run_btn and prompt:
 
                 if node_name in {"cad", "firmware", "sourcing"}:
                     pending_parallel = [
-                        step
-                        for step in ("cad", "firmware", "sourcing")
-                        if statuses[step] != "done"
+                        s for s in ("cad", "firmware", "sourcing")
+                        if statuses[s] != "done"
                     ]
-                    for step in pending_parallel:
-                        statuses[step] = "running"
+                    for s in pending_parallel:
+                        statuses[s] = "running"
                     if not pending_parallel:
                         statuses["sim_verify"] = "running"
 
@@ -243,169 +228,227 @@ if run_btn and prompt:
 
         elapsed = time.time() - start_time
         statuses = {
-            step: ("failed" if step == "sim_verify" and not state.get("sim_passed", False) else "done")
-            for step in PIPELINE_STEPS
+            s: ("failed" if s == "sim_verify" and not state.get("sim_passed", False) else "done")
+            for s in PIPELINE_STEPS
         }
         render_status_table(status_box, statuses)
         render_sidebar_timeline(timeline_box)
         st.session_state["pipeline_result"] = state
         st.session_state["pipeline_elapsed"] = elapsed
 
-if "pipeline_result" in st.session_state:
-    state = st.session_state["pipeline_result"]
-    elapsed = st.session_state.get("pipeline_elapsed", 0.0)
+# ---------------------------------------------------------------------------
+# Results — rendered on every rerun so downloads survive page refresh
+# ---------------------------------------------------------------------------
 
-    st.success("Pipeline complete.")
-    retries = state.get("retry_count", 0)
-    col_a, col_b, col_c = st.columns(3)
-    col_a.metric("Run time", f"{elapsed:.0f}s")
-    col_b.metric("Redesign retries", retries)
-    col_c.metric("Est. cost", "~$0.03")
-    st.markdown("---")
+if "pipeline_result" not in st.session_state:
+    st.stop()
 
-    tabs = st.tabs(["CAD", "Firmware", "Parts", "Simulation"])
+state = st.session_state["pipeline_result"]
+elapsed = st.session_state.get("pipeline_elapsed", 0.0)
+tasks = state.get("decomposed_tasks", {})
 
-    with tabs[0]:
-        st.subheader("Generated OpenSCAD")
-        st.code(state.get("cad_code", ""), language="openscad")
+st.success("Pipeline complete.")
+col_a, col_b, col_c = st.columns(3)
+col_a.metric("Run time", f"{elapsed:.0f}s")
+col_b.metric("Redesign retries", state.get("retry_count", 0))
+col_c.metric("Est. cost", "~$0.03")
 
-    with tabs[1]:
-        st.subheader("Arduino Firmware")
-        st.code(state.get("firmware_code", ""), language="cpp")
+st.divider()
 
-    with tabs[2]:
-        st.subheader("Parts List")
-        parts = state.get("parts_list", [])
-        if parts:
-            # Normalise price field — model may return price_cad or price_usd
-            for part in parts:
-                if "price_cad" not in part:
-                    part["price_cad"] = part.pop("price_usd", 0.0)
-            total = sum(part.get("price_cad", 0) * part.get("qty", 1) for part in parts)
-            st.metric("Estimated Total", f"${total:.2f} CAD")
-            df = pd.DataFrame(parts)
-            df["price_cad"] = df.get("price_cad", 0)
-            df["supplier"] = df.get("supplier", "Amazon.ca")
-            display_cols = {
-                "name": "Component",
-                "model": "Model",
-                "price_cad": "Price (CAD)",
-                "qty": "Qty",
-                "supplier": "Supplier",
-            }
-            df = df[[c for c in display_cols if c in df.columns]].rename(columns=display_cols)
+tab_cad, tab_fw, tab_parts, tab_sim = st.tabs(["🧱 CAD", "⚡ Firmware", "🛒 Parts", "🔬 Simulation"])
+
+# --- CAD tab ---
+with tab_cad:
+    geo = tasks.get("geometry_spec", {})
+    if geo:
+        st.subheader(tasks.get("goal", "CAD Design"))
+        c1, c2, c3 = st.columns(3)
+        dims = geo.get("base_dimensions_mm", {})
+        c1.metric("Width", f"{dims.get('width', '—')} mm")
+        c2.metric("Depth", f"{dims.get('depth', '—')} mm")
+        c3.metric("Height", f"{dims.get('height', '—')} mm")
+
+        st.info(geo.get("description", ""))
+
+        mc1, mc2 = st.columns(2)
+        with mc1:
+            moving = geo.get("moving_parts", [])
+            if moving:
+                st.markdown("**Moving parts**")
+                for p in moving:
+                    st.markdown(f"- {p}")
+        with mc2:
+            mounts = geo.get("mounting_points", [])
+            if mounts:
+                st.markdown("**Mounting points**")
+                for m in mounts:
+                    st.markdown(f"- {m}")
+
+        stability = geo.get("stability_requirement", "")
+        if stability:
+            st.caption(f"Stability requirement: {stability}")
+
+    stl_path = state.get("stl_path", "") or "outputs/turret.stl"
+    scad_path = "outputs/turret.scad"
+    if Path(stl_path).exists():
+        st.success(f"STL compiled: `{stl_path}`")
+    elif Path(scad_path).exists():
+        st.warning("OpenSCAD CLI not found — .scad source generated, STL not compiled.")
+
+    with st.expander("View OpenSCAD source"):
+        st.code(state.get("cad_code", "— not generated —"), language="openscad")
+
+# --- Firmware tab ---
+with tab_fw:
+    fw_spec = tasks.get("firmware_spec", {})
+    if fw_spec:
+        st.subheader(f"Firmware — {fw_spec.get('microcontroller', 'Arduino')}")
+
+        fc1, fc2 = st.columns(2)
+        with fc1:
+            st.markdown("**Inputs**")
+            for inp in fw_spec.get("inputs", []):
+                st.markdown(f"- {inp}")
+        with fc2:
+            st.markdown("**Outputs**")
+            for out in fw_spec.get("outputs", []):
+                st.markdown(f"- {out}")
+
+        logic = fw_spec.get("control_logic", "")
+        if logic:
+            st.info(f"Control logic: {logic}")
+
+        libs = fw_spec.get("libraries_needed", [])
+        if libs:
+            st.markdown("**Libraries**")
+            st.code("\n".join(f"#include <{lib}.h>" for lib in libs), language="cpp")
+
+    with st.expander("View full .ino source"):
+        st.code(state.get("firmware_code", "— not generated —"), language="cpp")
+
+# --- Parts tab ---
+with tab_parts:
+    parts = state.get("parts_list", [])
+    if not parts:
+        st.info("No parts list generated yet.")
+    else:
+        # Normalise price field
+        for part in parts:
+            if "price_cad" not in part:
+                part["price_cad"] = part.pop("price_usd", 0.0)
+
+        total = sum(part.get("price_cad", 0) * part.get("qty", 1) for part in parts)
+        st.metric("Estimated Total", f"${total:.2f} CAD")
+
+        df = pd.DataFrame(parts)
+        display_cols = {"name": "Component", "model": "Model", "price_cad": "Price (CAD)",
+                        "qty": "Qty", "supplier": "Supplier", "description": "Notes"}
+        df = df[[c for c in display_cols if c in df.columns]].rename(columns=display_cols)
+        if "Price (CAD)" in df.columns:
             df["Price (CAD)"] = df["Price (CAD)"].apply(lambda x: f"${float(x):.2f}")
-            st.dataframe(df, use_container_width=True, hide_index=True)
+        st.dataframe(df, use_container_width=True, hide_index=True)
 
-    with tabs[3]:
-        st.subheader("Physics Simulation")
-        if state.get("sim_passed", False):
-            st.success(f"Stable, passed all tilt checks ({state.get('retry_count', 0)} redesigns)")
-        else:
-            st.error(f"Unstable: {state.get('sim_failure_reason', '')}")
+# --- Simulation tab ---
+with tab_sim:
+    passed = state.get("sim_passed", False)
+    reason = state.get("sim_failure_reason", "")
 
-        if state.get("retry_count", 0) > 0:
-            st.markdown("**Redesign Attempts**")
-            for error in state.get("errors", []):
-                if error.startswith("Retry "):
-                    st.write(f"- {error}")
+    if passed:
+        st.success(f"✅ Stable — {reason or 'passed all tilt checks'}")
+    else:
+        st.error(f"❌ Unstable — {reason}")
 
-        screenshot = state.get("sim_screenshot", "")
-        if screenshot and Path(screenshot).exists():
-            st.image(screenshot)
-        else:
-            st.info("Simulation screenshot will appear after a live run.")
+    if state.get("retry_count", 0) > 0:
+        st.markdown(f"**{state['retry_count']} redesign(s) attempted**")
+        for err in state.get("errors", []):
+            if err.startswith("Retry "):
+                st.markdown(f"- {err}")
 
-    # ------------------------------------------------------------------
-    # Downloads — all artifact files checked on disk and offered together.
-    # Rendered here in the main Streamlit thread after the graph finishes,
-    # so st.download_button() always has the correct ScriptRunContext.
-    # ------------------------------------------------------------------
-    st.markdown("---")
-    st.subheader("Downloads")
+    screenshot = state.get("sim_screenshot", "")
+    if screenshot and Path(screenshot).exists():
+        st.image(screenshot, caption="Stability footprint diagram")
+    else:
+        st.info("Run the pipeline live to generate a simulation diagram.")
 
-    artifacts = [
-        {
-            "label": "OpenSCAD source (.scad)",
-            "path": "outputs/turret.scad",
-            "file_name": "turret.scad",
-            "mime": "text/plain",
-            "mode": "r",
-            "encoding": "utf-8",
-        },
-        {
-            "label": "STL model (.stl)",
-            "path": state.get("stl_path", "") or "outputs/turret.stl",
-            "file_name": "turret.stl",
-            "mime": "model/stl",
-            "mode": "rb",
-            "encoding": None,
-        },
-        {
-            "label": "Arduino firmware (.ino)",
-            "path": "outputs/firmware.ino",
-            "file_name": "firmware.ino",
-            "mime": "text/plain",
-            "mode": "r",
-            "encoding": "utf-8",
-        },
-        {
-            "label": "Parts list (.json)",
-            "path": "outputs/parts_list.json",
-            "file_name": "parts_list.json",
-            "mime": "application/json",
-            "mode": "r",
-            "encoding": "utf-8",
-        },
-        {
-            "label": "Simulation screenshot (.png)",
-            "path": "outputs/sim_screenshot.png",
-            "file_name": "sim_screenshot.png",
-            "mime": "image/png",
-            "mode": "rb",
-            "encoding": None,
-        },
-    ]
+# ---------------------------------------------------------------------------
+# Downloads
+# ---------------------------------------------------------------------------
 
-    found_any = False
-    dl_cols = st.columns(len(artifacts))
-    for col, artifact in zip(dl_cols, artifacts):
-        p = artifact["path"]
-        if p and Path(p).exists():
-            found_any = True
-            kwargs = {"encoding": artifact["encoding"]} if artifact["encoding"] else {}
-            with open(p, artifact["mode"], **kwargs) as fh:
-                data = fh.read()
-            if isinstance(data, str):
-                data = data.encode("utf-8")
-            col.download_button(
-                label=artifact["label"],
-                data=data,
-                file_name=artifact["file_name"],
-                mime=artifact["mime"],
-                use_container_width=True,
-            )
-        else:
-            col.button(artifact["label"], disabled=True, use_container_width=True)
+st.divider()
+st.subheader("Downloads")
 
-    if not found_any:
-        st.info("No output files were found. Run the pipeline with a live API key to generate artifacts.")
+artifacts = [
+    {
+        "label": "OpenSCAD source",
+        "path": "outputs/turret.scad",
+        "file_name": "turret.scad",
+        "mime": "text/plain",
+        "binary": False,
+    },
+    {
+        "label": "STL model",
+        "path": state.get("stl_path", "") or "outputs/turret.stl",
+        "file_name": "turret.stl",
+        "mime": "model/stl",
+        "binary": True,
+    },
+    {
+        "label": "Arduino firmware",
+        "path": "outputs/firmware.ino",
+        "file_name": "firmware.ino",
+        "mime": "text/plain",
+        "binary": False,
+    },
+    {
+        "label": "Parts list (JSON)",
+        "path": "outputs/parts_list.json",
+        "file_name": "parts_list.json",
+        "mime": "application/json",
+        "binary": False,
+    },
+    {
+        "label": "Sim screenshot",
+        "path": "outputs/sim_screenshot.png",
+        "file_name": "sim_screenshot.png",
+        "mime": "image/png",
+        "binary": True,
+    },
+]
 
-    if state.get("errors"):
-        st.markdown("---")
-        st.subheader("Non-fatal Errors")
-        for error in state["errors"]:
-            st.write(f"- {error}")
+dl_cols = st.columns(len(artifacts))
+for col, art in zip(dl_cols, artifacts):
+    p = art["path"]
+    if p and Path(p).exists():
+        mode = "rb" if art["binary"] else "r"
+        kwargs = {} if art["binary"] else {"encoding": "utf-8"}
+        with open(p, mode, **kwargs) as fh:
+            data = fh.read()
+        if isinstance(data, str):
+            data = data.encode("utf-8")
+        col.download_button(
+            label=art["label"],
+            data=data,
+            file_name=art["file_name"],
+            mime=art["mime"],
+            use_container_width=True,
+        )
+    else:
+        col.button(art["label"], disabled=True, use_container_width=True)
 
-    st.markdown("---")
-    st.subheader("Export full build spec")
-    if state.get("cad_code") and state.get("firmware_code"):
-        full_spec = {
-            "prompt": state.get("user_prompt"),
-            "goal": state.get("decomposed_tasks", {}).get("goal", ""),
-            "parts_count": len(state.get("parts_list", [])),
-            "sim_stable": state.get("sim_passed"),
-            "retries": state.get("retry_count", 0),
-        }
-        st.json(full_spec)
-        st.caption("Full CAD, firmware, and parts files are available in the Downloads section above.")
+# ---------------------------------------------------------------------------
+# Errors + build spec
+# ---------------------------------------------------------------------------
+
+if state.get("errors"):
+    with st.expander(f"⚠️ {len(state['errors'])} non-fatal error(s)"):
+        for err in state["errors"]:
+            st.markdown(f"- {err}")
+
+if tasks.get("goal"):
+    st.divider()
+    st.subheader("Build spec summary")
+    sc1, sc2, sc3, sc4 = st.columns(4)
+    sc1.metric("Goal", tasks.get("goal", "")[:40])
+    sc2.metric("Components", len(state.get("parts_list", [])))
+    sc3.metric("Sim stable", "Yes" if state.get("sim_passed") else "No")
+    sc4.metric("Retries", state.get("retry_count", 0))
