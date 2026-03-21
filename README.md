@@ -10,7 +10,7 @@ Autonomous Prototyper is a LangGraph-driven hardware pipeline that turns one nat
 
 ## Stack
 
-- Python 3.11+
+- Python 3.11
 - LangGraph
 - Gemini API
 - Streamlit
@@ -20,10 +20,16 @@ Autonomous Prototyper is a LangGraph-driven hardware pipeline that turns one nat
 ## Run
 
 ```bash
+python3.11 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
 streamlit run app.py
 ```
+
+On Apple Silicon Macs, `pybullet` may still fail to build from PyPI even under Python 3.11.
+This project now treats simulation as an optional dependency on that platform and falls back
+gracefully if PyBullet is unavailable.
 
 Install OpenSCAD separately if you want live STL compilation:
 
