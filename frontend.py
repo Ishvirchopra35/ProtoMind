@@ -726,11 +726,13 @@ def App():
             except Exception as exc:
                 from tenacity import RetryError
                 if isinstance(exc, RetryError):
-                    msg = ("Gemini API rate limit reached after multiple retries. "
-                           "Wait 60 seconds and try again, or check your API quota at "
-                           "aistudio.google.com.")
+                    cause = exc.last_attempt.exception()
+                    code = getattr(cause, "code", "unknown")
+                    msg = (f"Gemini API error (code {code}) after retries: {cause}. "
+                           "Check your API quota at aistudio.google.com → "
+                           "API keys → View usage.")
                 else:
-                    msg = str(exc)
+                    msg = f"{type(exc).__name__}: {exc}"
                 asyncio.run_coroutine_threadsafe(queue.put(("error", msg)), loop)
 
         threading.Thread(target=run_pipeline, daemon=True).start()
