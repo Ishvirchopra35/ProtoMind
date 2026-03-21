@@ -724,7 +724,14 @@ def App():
                 asyncio.run_coroutine_threadsafe(
                     queue.put(("done", dict(accumulated), time.time() - start)), loop)
             except Exception as exc:
-                asyncio.run_coroutine_threadsafe(queue.put(("error", str(exc))), loop)
+                from tenacity import RetryError
+                if isinstance(exc, RetryError):
+                    msg = ("Gemini API rate limit reached after multiple retries. "
+                           "Wait 60 seconds and try again, or check your API quota at "
+                           "aistudio.google.com.")
+                else:
+                    msg = str(exc)
+                asyncio.run_coroutine_threadsafe(queue.put(("error", msg)), loop)
 
         threading.Thread(target=run_pipeline, daemon=True).start()
 

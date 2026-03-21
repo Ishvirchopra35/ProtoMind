@@ -37,7 +37,6 @@ No markdown, no explanation, just the raw JSON object.
 def decompose_prompt(state: PrototyperState) -> PrototyperState:
     raw = call_pro(
         DECOMPOSE_PROMPT.format(user_prompt=state["user_prompt"]),
-        thinking_budget=4000,
     )
     clean = extract_code_block(raw, "json")
     if not clean:

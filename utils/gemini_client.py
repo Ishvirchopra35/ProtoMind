@@ -2,14 +2,19 @@ import os
 
 from google import genai
 from google.genai import types
-from google.genai.errors import ClientError
+from google.genai.errors import ClientError, ServerError
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
-
-def _is_rate_limited(exc: BaseException) -> bool:
-    return isinstance(exc, ClientError) and getattr(exc, "code", None) == 429
-
 _MODEL = "gemini-2.5-flash"
+
+
+def _should_retry(exc: BaseException) -> bool:
+    """Retry on rate limits (429) and transient server errors (500/503)."""
+    if isinstance(exc, ClientError):
+        return getattr(exc, "code", None) in (429, 500, 503)
+    if isinstance(exc, ServerError):
+        return True
+    return False
 
 
 def _api_key() -> str:
@@ -23,9 +28,9 @@ def _api_key() -> str:
 
 
 @retry(
-    retry=retry_if_exception(_is_rate_limited),
-    wait=wait_exponential(multiplier=1, min=4, max=30),
-    stop=stop_after_attempt(4),
+    retry=retry_if_exception(_should_retry),
+    wait=wait_exponential(multiplier=2, min=5, max=60),
+    stop=stop_after_attempt(6),
 )
 def call_pro(prompt: str, thinking_budget: int = 0) -> str:
     """Gemini 2.5 Flash for reasoning-heavy steps."""
@@ -42,9 +47,9 @@ def call_pro(prompt: str, thinking_budget: int = 0) -> str:
 
 
 @retry(
-    retry=retry_if_exception(_is_rate_limited),
-    wait=wait_exponential(multiplier=1, min=4, max=30),
-    stop=stop_after_attempt(4),
+    retry=retry_if_exception(_should_retry),
+    wait=wait_exponential(multiplier=2, min=5, max=60),
+    stop=stop_after_attempt(6),
 )
 def call_flash_with_search(prompt: str) -> str:
     """Gemini 2.5 Flash with Google Search grounding for sourcing."""
