@@ -176,7 +176,12 @@ if run_btn and prompt:
         render_status_table(status_box, statuses)
         st.success("Loaded demo data.")
     else:
-        state = build_initial_state(prompt)
+        initial_state = build_initial_state(prompt)
+        # Accumulated state: starts as the full initial state and is updated
+        # with each node's partial output as the graph streams.  We NEVER
+        # replace it wholesale — graph.stream() yields partial dicts, not the
+        # full state, so replacing would discard all previously-written keys.
+        state = dict(initial_state)
         graph = build_graph()
         start_time = time.time()
         step_map = {
@@ -189,9 +194,11 @@ if run_btn and prompt:
         }
 
         with st.spinner("Running pipeline..."):
-            for step_output in graph.stream(state):
+            for step_output in graph.stream(initial_state):
                 node_name = list(step_output.keys())[0]
-                current_state = list(step_output.values())[0]
+                node_update = list(step_output.values())[0]
+                # Merge the partial update into the accumulated state.
+                state.update(node_update)
                 resolved_step = step_map.get(node_name)
 
                 st.session_state["current_step"] = node_name
@@ -207,11 +214,10 @@ if run_btn and prompt:
                     statuses["firmware"] = "running"
                     statuses["sourcing"] = "running"
                     render_status_table(status_box, statuses)
-                    state = current_state
                     continue
 
                 if resolved_step:
-                    if resolved_step == "sim_verify" and not current_state.get("sim_passed", True):
+                    if resolved_step == "sim_verify" and not node_update.get("sim_passed", True):
                         statuses[resolved_step] = "failed"
                     else:
                         statuses[resolved_step] = "done"
@@ -232,7 +238,6 @@ if run_btn and prompt:
                     statuses["sim_verify"] = "pending"
 
                 render_status_table(status_box, statuses)
-                state = current_state
 
         elapsed = time.time() - start_time
         statuses = {
@@ -255,19 +260,10 @@ if run_btn and prompt:
     with tabs[0]:
         st.subheader("Generated OpenSCAD")
         st.code(state.get("cad_code", ""), language="openscad")
-        stl_path = state.get("stl_path", "")
-        if stl_path and Path(stl_path).exists():
-            with open(stl_path, "rb") as file:
-                st.download_button("Download STL", file, file_name="turret.stl")
-        elif Path("outputs/turret.scad").exists():
-            st.info("OpenSCAD was not available, so only the .scad source was generated.")
 
     with tabs[1]:
         st.subheader("Arduino Firmware")
         st.code(state.get("firmware_code", ""), language="cpp")
-        firmware_code = state.get("firmware_code", "")
-        if firmware_code:
-            st.download_button("Download .ino", firmware_code.encode(), file_name="firmware.ino")
 
     with tabs[2]:
         st.subheader("Parts List")
@@ -279,12 +275,6 @@ if run_btn and prompt:
             df.columns = ["Component", "Model", "Price (USD)", "Qty", "Supplier"]
             df["Price (USD)"] = df["Price (USD)"].apply(lambda x: f"${x:.2f}")
             st.dataframe(df, use_container_width=True, hide_index=True)
-            st.download_button(
-                "Download parts_list.json",
-                json.dumps(parts, indent=2).encode(),
-                file_name="parts_list.json",
-                mime="application/json",
-            )
 
     with tabs[3]:
         st.subheader("Physics Simulation")
@@ -305,6 +295,81 @@ if run_btn and prompt:
         else:
             st.info("Simulation screenshot will appear after a live run.")
 
+    # ------------------------------------------------------------------
+    # Downloads — all artifact files checked on disk and offered together.
+    # Rendered here in the main Streamlit thread after the graph finishes,
+    # so st.download_button() always has the correct ScriptRunContext.
+    # ------------------------------------------------------------------
+    st.markdown("---")
+    st.subheader("Downloads")
+
+    artifacts = [
+        {
+            "label": "OpenSCAD source (.scad)",
+            "path": "outputs/turret.scad",
+            "file_name": "turret.scad",
+            "mime": "text/plain",
+            "mode": "r",
+            "encoding": "utf-8",
+        },
+        {
+            "label": "STL model (.stl)",
+            "path": state.get("stl_path", "") or "outputs/turret.stl",
+            "file_name": "turret.stl",
+            "mime": "model/stl",
+            "mode": "rb",
+            "encoding": None,
+        },
+        {
+            "label": "Arduino firmware (.ino)",
+            "path": "outputs/firmware.ino",
+            "file_name": "firmware.ino",
+            "mime": "text/plain",
+            "mode": "r",
+            "encoding": "utf-8",
+        },
+        {
+            "label": "Parts list (.json)",
+            "path": "outputs/parts_list.json",
+            "file_name": "parts_list.json",
+            "mime": "application/json",
+            "mode": "r",
+            "encoding": "utf-8",
+        },
+        {
+            "label": "Simulation screenshot (.png)",
+            "path": "outputs/sim_screenshot.png",
+            "file_name": "sim_screenshot.png",
+            "mime": "image/png",
+            "mode": "rb",
+            "encoding": None,
+        },
+    ]
+
+    found_any = False
+    dl_cols = st.columns(len(artifacts))
+    for col, artifact in zip(dl_cols, artifacts):
+        p = artifact["path"]
+        if p and Path(p).exists():
+            found_any = True
+            kwargs = {"encoding": artifact["encoding"]} if artifact["encoding"] else {}
+            with open(p, artifact["mode"], **kwargs) as fh:
+                data = fh.read()
+            if isinstance(data, str):
+                data = data.encode("utf-8")
+            col.download_button(
+                label=artifact["label"],
+                data=data,
+                file_name=artifact["file_name"],
+                mime=artifact["mime"],
+                use_container_width=True,
+            )
+        else:
+            col.button(artifact["label"], disabled=True, use_container_width=True)
+
+    if not found_any:
+        st.info("No output files were found. Run the pipeline with a live API key to generate artifacts.")
+
     if state.get("errors"):
         st.markdown("---")
         st.subheader("Non-fatal Errors")
@@ -322,4 +387,4 @@ if run_btn and prompt:
             "retries": state.get("retry_count", 0),
         }
         st.json(full_spec)
-        st.caption("Full CAD, firmware, and parts files are available in the tabs above.")
+        st.caption("Full CAD, firmware, and parts files are available in the Downloads section above.")
