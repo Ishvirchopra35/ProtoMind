@@ -6,28 +6,33 @@ from utils.code_extractor import extract_code_block
 from utils.gemini_client import call_flash_with_search
 
 SOURCING_PROMPT = """
-You are a hardware procurement specialist. Find the cheapest currently available
-components for this build using Google Shopping.
+You are a hardware procurement specialist sourcing components for a Canadian maker.
+
+Search Amazon.ca for each component below and return the current listed price in
+Canadian dollars (CAD). Use your Google Search tool to look up each item on
+amazon.ca right now — do not guess or use placeholder prices.
 
 Components needed:
 {components}
 
-Search DigiKey, Mouser, Amazon, Adafruit, and SparkFun for the best prices.
+Rules:
+- Supplier is always "Amazon.ca"
+- price_cad must be the real current price in CAD you found, never 0 or null
+- If a component has multiple options, pick the cheapest that meets the spec
+- qty is the number of units needed for one build
 
-Return ONLY a valid JSON array:
+Return ONLY a valid JSON array with no markdown, no explanation:
 [
   {{
     "name": "component name",
-    "model": "specific model number",
-    "price_usd": 0.00,
-    "url": "direct product URL",
+    "model": "specific model or ASIN",
+    "price_cad": 12.99,
+    "url": "https://www.amazon.ca/dp/...",
     "qty": 1,
-    "supplier": "supplier name",
-    "description": "one sentence on why this fits the spec"
+    "supplier": "Amazon.ca",
+    "description": "one sentence on why this part fits the spec"
   }}
 ]
-
-No markdown, no explanation, just the raw JSON array.
 """
 
 
@@ -57,11 +62,11 @@ def source_parts(state: PrototyperState) -> PrototyperState:
             {
                 "name": component,
                 "model": "TBD",
-                "price_usd": 0.0,
-                "url": "",
+                "price_cad": 0.0,
+                "url": "https://www.amazon.ca",
                 "qty": 1,
-                "supplier": "TBD",
-                "description": "Search failed, verify manually.",
+                "supplier": "Amazon.ca",
+                "description": "Search failed — verify price manually on Amazon.ca.",
             }
             for component in components
         ]

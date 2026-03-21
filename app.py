@@ -269,11 +269,11 @@ if run_btn and prompt:
         st.subheader("Parts List")
         parts = state.get("parts_list", [])
         if parts:
-            total = sum(part.get("price_usd", 0) * part.get("qty", 1) for part in parts)
-            st.metric("Estimated Total", f"${total:.2f} USD")
-            df = pd.DataFrame(parts)[["name", "model", "price_usd", "qty", "supplier"]]
-            df.columns = ["Component", "Model", "Price (USD)", "Qty", "Supplier"]
-            df["Price (USD)"] = df["Price (USD)"].apply(lambda x: f"${x:.2f}")
+            total = sum(part.get("price_cad", 0) * part.get("qty", 1) for part in parts)
+            st.metric("Estimated Total", f"${total:.2f} CAD")
+            df = pd.DataFrame(parts)[["name", "model", "price_cad", "qty", "supplier"]]
+            df.columns = ["Component", "Model", "Price (CAD)", "Qty", "Supplier"]
+            df["Price (CAD)"] = df["Price (CAD)"].apply(lambda x: f"${x:.2f}")
             st.dataframe(df, use_container_width=True, hide_index=True)
 
     with tabs[3]:
